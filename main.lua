@@ -138,7 +138,6 @@ function opfunc(input)
 
         -- add style gradient
         if name and style_weights[name] then
-            print(module.output:size(), name, art_grams[name]:size())
             local s_loss, s_grad = style_grad(module.output, art_grams[name])
             local w = opt.style_factor * style_weights[name] / style_weight_sum
             --printf('[style]\t%s\t%.2e\n', name, w * s_loss)
