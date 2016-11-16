@@ -24,7 +24,7 @@ cmd:option('-style_weight', 1e2)
 cmd:option('-tv_weight', 1e-3)
 cmd:option('-num_iterations', 1000)
 cmd:option('-normalize_gradients', false)
-cmd:option('-init', 'random', 'random|image')
+cmd:option('-init', 'image', 'random|image')
 cmd:option('-optimizer', 'lbfgs', 'lbfgs|adam|sgd')
 cmd:option('-learning_rate', 1e1)
 
@@ -43,6 +43,7 @@ cmd:option('-model_file', 'models/VGG_ILSVRC_19_layers.caffemodel')
 cmd:option('-backend', 'nn', 'nn|cudnn|clnn')
 cmd:option('-cudnn_autotune', false)
 cmd:option('-seed', -1)
+cmd:option('-mask_crit', 'cos', 'Criterion for Gram matrix similarity (cos|mse)')
 
 cmd:option('-content_layers', 'relu4_2', 'layers for content')
 cmd:option('-style_layers', 'relu1_1,relu2_1,relu3_1,relu4_1,relu5_1', 'layers for style')
@@ -59,6 +60,11 @@ local function main(params)
   local frames_dir = params.output_dir
   if not paths.dirp(frames_dir) then
       paths.mkdir(frames_dir)
+  end
+
+  local mask_crit = params.mask_crit
+  if not (mask_crit == 'cos' or mask_crit == 'mse') then
+    error('unrecognized initialization option: ' .. param.mask_crit)
   end
 
   if not params.cpu then
@@ -232,18 +238,23 @@ local function main(params)
         --Init the total of the masks for the weight
         local total_mask=torch.Tensor(mask_labels:size()):fill(0)
         -- The segements in the label are label starting with zero
-        for i=0, mask_labels:max(), 1 do
+        for j=0, mask_labels:max(), 1 do
 
-          if not masks_sums[i+1] then
-            masks_sums[i+1] = 0
+          if not masks_sums[j+1] then
+            masks_sums[j+1] = 0
           end
 
-          if not masks_min[i+1] then
-            masks_min[i+1] = 0
+          if not masks_min[j+1] then
+            masks_min[j+1] = 0
           end
 
-          if not masks_max[i+1] then
-            masks_max[i+1] = 0
+          if not masks_max[j+1] then
+            -- The cosine distance is already normalized between 0 and 1
+            if mask_crit == 'cos' then
+              masks_max[j+1] = 1
+            else
+              masks_max[j+1] = 0
+            end
           end
           -- Need a network to get the gram matrix
           local mask_gram = GramMatrix():float()
@@ -261,7 +272,7 @@ local function main(params)
 
           -- Make the actual mask
           mask = mask:apply(function(val)
-            if val == i then 
+            if val == j then 
               return 1
             else
               return 0
@@ -270,32 +281,37 @@ local function main(params)
 
           -- Apply the mask to the img
           local numChannels = img2:size(1)
-          for i=1, numChannels, 1 do
-            img2[i]:cmul(mask)
+          for c=1, numChannels, 1 do
+            img2[c]:cmul(mask)
           end
           local mask_features = net:forward(img2):clone()
           -- Feed the masked image into the gram matrix
           local mask_target = mask_gram:forward(mask_features):clone()
           mask_target:div(img2:nElement())
-
-          local crit = nn.MSECriterion()
-
-          -- Use the mean squared error as the distance metric
-          local MSE = crit:forward(mask_target, target_i)
-          masks_sums[i+1] = masks_sums[i+1] + MSE
-
-          if MSE < masks_min[i+1] then
-            masks_min[i+1] = MSE
+          local dist = 0
+          if mask_crit == 'mse' then 
+            local crit = nn.MSECriterion()
+            -- Use the mean squared error as the distance metric
+            dist = crit:forward(mask_target, target_i)
+          elseif mask_crit == 'cos' then 
+            local crit = nn.CosineDistance()
+            -- Use the consine distance as the distance metric
+            dist = crit:forward({mask_target:double(), target_i:double()}):mean()
+          end
+          --print(dist)
+          masks_sums[j+1] = masks_sums[j+1] + dist
+          if dist < masks_min[j+1] then
+            masks_min[j+1] = dist
           end
 
-          if MSE > masks_max[i+1] then
-            masks_max[i+1] = MSE
+          if dist > masks_max[j+1] then
+            masks_max[j+1] = dist
           end
 
            -- Make the actual mask
           mask = mask:apply(function(val)
             if val == 1 then 
-              return MSE
+              return dist
             else
               return 0
             end
@@ -337,9 +353,7 @@ local function main(params)
         module.gradBias = nil
     end
   end
-  print(collectgarbage('count')*1024)
   collectgarbage()
-  print('here')
   -- We have the mask, now we need to normalizes across the layers for a segment
   min_masks = {}
   diff_masks = {}
@@ -381,11 +395,11 @@ local function main(params)
 
     -- Normalize segments across layers instead of within the layers
     masks_weight[name] = masks_weight[name]:double():csub(min_masks[name]):cdiv(diff_masks[name])
+    print(masks_weight[name])
+    local loss_mod = net:findByName(name)
+    print(i, loss_mod._name)
   end
 
-  for i, loss_module in ipairs(style_losses) do 
-    print(i, loss_module._name)
-  end
   
   -- Initialize the image
   if params.seed >= 0 then
