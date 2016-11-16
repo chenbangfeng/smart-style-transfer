@@ -1,56 +1,31 @@
---
--- Convenience functions to replicate Caffe preprocessing
---
-
-local means = { 104, 117, 123 }
-
-function preprocess(img, scale)
-    -- handle monochrome images
-    if img:size(1) == 1 then
-        local copy = torch.FloatTensor(3, img:size(2), img:size(3))
-        copy[1] = img[1]
-        copy[2] = img[1]
-        copy[3] = img[1]
-        img = copy
-    elseif img:size(1) == 4 then
-        img = img[{{1,3},{},{}}]
-    end
-
-    local w, h = img:size(3), img:size(2)
-    if scale then
-        if w < h then
-            img = image.scale(img, scale * w / h, scale)
-        else
-            img = image.scale(img, scale, scale * h / w)
-        end
-    end
-
-    -- reverse channels
-    local copy = torch.FloatTensor(img:size())
-    copy[1] = img[3]
-    copy[2] = img[2]
-    copy[3] = img[1]
-    img = copy
-
-    img:mul(255)
-    for i = 1, 3 do
-        img[i]:add(-means[i])
-    end
-    return img:view(1, 3, img:size(2), img:size(3))
+-- Preprocess an image before passing it to a Caffe model.
+-- We need to rescale from [0, 1] to [0, 255], convert from RGB to BGR,
+-- and subtract the mean pixel.
+function preprocess(img)
+  local mean_pixel = torch.DoubleTensor({103.939, 116.779, 123.68})
+  local perm = torch.LongTensor{3, 2, 1}
+  img = img:index(1, perm):mul(256.0)
+  mean_pixel = mean_pixel:view(3, 1, 1):expandAs(img)
+  img:add(-1, mean_pixel)
+  return img
 end
 
-function depreprocess(img)
-    local copy = torch.FloatTensor(3, img:size(3), img:size(4)):copy(img)
-    for i = 1, 3 do
-        copy[i]:add(means[i])
-    end
-    copy:div(255)
 
-    -- reverse channels
-    local copy2 = torch.FloatTensor(copy:size())
-    copy2[1] = copy[3]
-    copy2[2] = copy[2]
-    copy2[3] = copy[1]
-    copy2:clamp(0, 1)
-    return copy2
+-- Undo the above preprocessing.
+function deprocess(img)
+  local mean_pixel = torch.DoubleTensor({103.939, 116.779, 123.68})
+  mean_pixel = mean_pixel:view(3, 1, 1):expandAs(img)
+  img = img + mean_pixel
+  local perm = torch.LongTensor{3, 2, 1}
+  img = img:index(1, perm):div(256.0)
+  return img
+end
+
+
+-- Combine the Y channel of the generated image and the UV channels of the
+-- content image to perform color-independent style transfer.
+function original_colors(content, generated)
+  local generated_y = image.rgb2yuv(generated)[{{1, 1}}]
+  local content_uv = image.rgb2yuv(content)[{{2, 3}}]
+  return image.yuv2rgb(torch.cat(generated_y, content_uv, 1))
 end
