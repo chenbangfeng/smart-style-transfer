@@ -239,7 +239,7 @@ local function main(params)
         local target_features = net:forward(style_image_caffe):clone()
         local target_i = style_gram:forward(target_features):clone()
         --Init the total of the masks for the weight
-        local total_mask=torch.Tensor(mask_labels:size()):fill(0)
+        local total_mask=torch.Tensor(mask_labels:size()):fill(0):typeAs(target_i)
         -- The segements in the label are label starting with zero
         for j=0, mask_labels:max(), 1 do
 
@@ -299,7 +299,7 @@ local function main(params)
           elseif mask_crit == 'cos' then 
             local crit = nn.CosineDistance()
             -- Use the consine distance as the distance metric
-            dist = crit:forward({mask_target:double(), target_i:double()}):mean()
+            dist = crit:forward({mask_target:double(), target_i:double()}):float():mean()
           end
 
           masks_sums[j+1] = masks_sums[j+1] + dist
@@ -319,9 +319,9 @@ local function main(params)
               return 0
             end
           end)
-
+          
           -- Add the mask values to the total mask
-          total_mask:add(mask:double())
+          total_mask:add(mask)
           collectgarbage()
         end
 
@@ -364,9 +364,9 @@ local function main(params)
   net:forward(content_image_caffe)
   for i,name in pairs(style_layers) do
 
-    min_masks[name] = torch.Tensor(mask_labels:size()):fill(0)
-    diff_masks[name] = torch.Tensor(mask_labels:size()):fill(0)
-    sum_masks[name] = torch.Tensor(mask_labels:size()):fill(0)
+    min_masks[name] = torch.Tensor(mask_labels:size()):fill(0):typeAs(content_image_caffe)
+    diff_masks[name] = torch.Tensor(mask_labels:size()):fill(0):typeAs(content_image_caffe)
+    sum_masks[name] = torch.Tensor(mask_labels:size()):fill(0):typeAs(content_image_caffe)
     for i=0, mask_labels:max(), 1 do
       local total = masks_sums[i+1]
       local min = masks_min[i+1]
@@ -382,7 +382,7 @@ local function main(params)
         else
           return 0
         end
-      end):double()
+      end)
 
       min_masks[name]:add(min_mask)
       -- Make the actual mask
@@ -392,7 +392,7 @@ local function main(params)
         else
           return 0
         end
-      end):double()
+      end)
 
       sum_mask = mask:clone():apply(function(val)
         if val == i then 
@@ -400,7 +400,7 @@ local function main(params)
         else
           return 0
         end
-      end):double()
+      end)
       sum_masks[name]:add(sum_mask)
 
       diff_mask = mask:clone():apply(function(val)
@@ -409,19 +409,27 @@ local function main(params)
         else
           return 0
         end
-      end):double()
+      end)
 
       diff_masks[name]:add(diff_mask)
     end
     collectgarbage()
     -- Normalize segments across layers instead of within the layers
-    masks_weight[name] = masks_weight[name]:double():csub(min_masks[name]):cdiv(diff_masks[name]):cdiv(sum_masks[name])
+    masks_weight[name] = masks_weight[name]:csub(min_masks[name]):cdiv(diff_masks[name]):cdiv(sum_masks[name])
 
     local loss_mod = net:findByName(name)
     local target_features  = loss_mod.output
-    local scaled_mask = image.scale(masks_weight[name], math.max(target_features:size(2), target_features:size(3)))
+    print(image)
+    local scaled_mask = image.scale(masks_weight[name]:float(), math.max(target_features:size(2), target_features:size(3)))
     -- This happens to just be the gram matrix of the mask
     scaled_mask = scaled_mask:reshape(scaled_mask:nElement())
+    if not params.cpu then
+      if params.backend ~= 'clnn' then
+        scaled_mask = scaled_mask:cuda()
+      else
+        scaled_mask = scaled_mask:cl()
+      end
+    end
     --[[
     local target_features  = loss_mod.output
     local scaled_mask = image.scale(masks_weight[name], caf)

@@ -26,7 +26,7 @@ function StyleLoss:maskInput(input)
   if not input then print('input is nil') end
   local clone = input:clone()
   for i=1, clone:size(1), 1 do
-    clone:view(clone:size(1), clone:size(2) * clone:size(3))[i]:cmul(self.mask:float())
+    clone:view(clone:size(1), clone:size(2) * clone:size(3))[i]:cmul(self.mask)
   end
   return clone
 end
