@@ -280,6 +280,13 @@ local function main(params)
             end
           end)
 
+          if not params.cpu then
+            if params.backend ~= 'clnn' then
+              mask:cuda()
+            else
+              maks:cl()
+            end
+          end
           -- Apply the mask to the img
           local numChannels = img2:size(1)
           for c=1, numChannels, 1 do
