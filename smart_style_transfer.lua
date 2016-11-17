@@ -282,8 +282,10 @@ local function main(params)
 
           if not params.cpu then
             if params.backend ~= 'clnn' then
+              img2:cuda()
               mask:cuda()
             else
+              img2:cl()
               maks:cl()
             end
           end
