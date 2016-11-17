@@ -357,6 +357,7 @@ local function main(params)
   -- We have the mask, now we need to normalizes across the layers for a segment
   min_masks = {}
   diff_masks = {}
+  net:forward(style_image_caffe)
   for i,name in pairs(style_layers) do
 
     min_masks[name] = torch.Tensor(mask_labels:size()):fill(0)
@@ -395,11 +396,19 @@ local function main(params)
 
     -- Normalize segments across layers instead of within the layers
     masks_weight[name] = masks_weight[name]:double():csub(min_masks[name]):cdiv(diff_masks[name])
-    print(masks_weight[name])
-    local loss_mod = net:findByName(name)
-    print(i, loss_mod._name)
-  end
 
+    local loss_mod = net:findByName(name)
+    local target_features  = loss_mod.output
+    local scaled_mask = image.scale(masks_weight[name], target_features:size(3), target_features:size(2))
+    for i=1, target_features:size(1), 1 do
+      target_features[1]:cmul(scaled_mask:float())
+    end
+    local Gram = GramMatrix()
+    local new_target = Gram:forward(target_features:double()):clone()
+    new_target:div(target_features:nElement())
+    loss_mod:updateTarget(new_target:float())
+  end
+  collectgarbage()
   
   -- Initialize the image
   if params.seed >= 0 then

@@ -1,21 +1,23 @@
 -- Define an nn Module to compute style loss in-place
 local StyleLoss, parent = torch.class('nn.StyleLoss', 'nn.Module')
 
-function StyleLoss:__init(strength, target,  normalize)
+function StyleLoss:__init(strength, target, normalize)
   parent.__init(self)
   self.normalize = normalize or false
   self.strength = strength
   self.target = target
   self.loss = 0
-  self.test_weights = test
-  --print(test:view(-1):size())
   self.gram = GramMatrix()
   self.G = nil
   self.crit = nn.MSECriterion()
 end
 
+function StyleLoss:updateTarget(target)
+  self.target = target
+end
+
 function StyleLoss:updateOutput(input)
-  self.G = self.gram:forward(input)
+  self.G = self.gram:forward(input, input)
   self.G:div(input:nElement())
   self.loss = self.crit:forward(self.G, self.target)
   self.loss = self.loss * self.strength
