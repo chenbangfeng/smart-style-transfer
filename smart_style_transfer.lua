@@ -111,7 +111,7 @@ local function main(params)
   local style_image_caffe = preprocess(style_img):float()
 
   -- Load mask labels
-  local mask_labels = torch.load(params.mask_labels)
+  local mask_labels = torch.load(params.mask_labels):float()
   local max = mask_labels:max()
   local min = mask_labels:min()
   -- Normalize so we can scale this like an image
@@ -147,7 +147,7 @@ local function main(params)
     else
       content_image_caffe = content_image_caffe:cl()
       style_image_caffe = style_image_caffe:cl()
-      mask_labels = mask_labels:cuda()
+      mask_labels = mask_labels:cl()
     end
   end
   
@@ -164,9 +164,9 @@ local function main(params)
     local tv_mod = nn.TVLoss(params.tv_weight):float()
     if not params.cpu then
       if params.backend ~= 'clnn' then
-        tv_mod:cuda()
+        tv_mod = tv_mod:cuda()
       else
-        tv_mod:cl()
+       tv_mod=  tv_mod:cl()
       end
     end
     net:add(tv_mod)
