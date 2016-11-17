@@ -20,7 +20,7 @@ cmd:option('-mask_labels', 'masks/origami.dat',
 
 -- Optimization options
 cmd:option('-content_weight', 5e0)
-cmd:option('-style_weight', 1e2)
+cmd:option('-style_weight', 1e4)
 cmd:option('-tv_weight', 1e-3)
 cmd:option('-num_iterations', 1000)
 cmd:option('-normalize_gradients', false)
@@ -29,7 +29,7 @@ cmd:option('-optimizer', 'lbfgs', 'lbfgs|adam|sgd')
 cmd:option('-learning_rate', 1e1)
 
 -- Output options
-cmd:option('-print_iter', 20)
+cmd:option('-print_iter', 1)
 cmd:option('-save_iter', 10)
 cmd:option('-output_image', 'out.png')
 cmd:option('-output_dir',      'frames', 'Output directory to save to.' )
@@ -46,7 +46,8 @@ cmd:option('-seed', -1)
 cmd:option('-mask_crit', 'cos', 'Criterion for Gram matrix similarity (cos|mse)')
 
 cmd:option('-content_layers', 'relu4_2', 'layers for content')
-cmd:option('-style_layers', 'relu1_1,relu2_1,relu3_1,relu4_1,relu5_1', 'layers for style')
+--cmd:option('-style_layers', 'relu1_1','layers for style')
+cmd:option('-style_layers', 'relu1_1,relu2_1,relu3_1,relu4_1,relu5_1','layers for style')
 
 paths.dofile('util/nnModule.lua')
 paths.dofile('layers/contentLoss.lua')
@@ -105,7 +106,8 @@ local function main(params)
   -- Load style image
   local style_size = math.ceil(params.style_scale * params.image_size)
   local style_img = image.load(params.style_image, 3)
-  style_img = image.scale(style_img, style_size, 'bilinear')
+  -- Scale image to have same dimensions as the content
+  style_img = image.scale(style_img, content_image:size(2), content_image:size(3), 'bilinear')
   local style_image_caffe = preprocess(style_img):float()
 
   -- Load mask labels
@@ -234,7 +236,6 @@ local function main(params)
         local tests = nill
         local target_features = net:forward(style_image_caffe):clone()
         local target_i = style_gram:forward(target_features):clone()
-
         --Init the total of the masks for the weight
         local total_mask=torch.Tensor(mask_labels:size()):fill(0)
         -- The segements in the label are label starting with zero
@@ -298,7 +299,7 @@ local function main(params)
             -- Use the consine distance as the distance metric
             dist = crit:forward({mask_target:double(), target_i:double()}):mean()
           end
-          --print(dist)
+
           masks_sums[j+1] = masks_sums[j+1] + dist
           if dist < masks_min[j+1] then
             masks_min[j+1] = dist
@@ -357,23 +358,23 @@ local function main(params)
   -- We have the mask, now we need to normalizes across the layers for a segment
   min_masks = {}
   diff_masks = {}
-  net:forward(style_image_caffe)
+  sum_masks = {}
+  net:forward(content_image_caffe)
   for i,name in pairs(style_layers) do
 
     min_masks[name] = torch.Tensor(mask_labels:size()):fill(0)
     diff_masks[name] = torch.Tensor(mask_labels:size()):fill(0)
+    sum_masks[name] = torch.Tensor(mask_labels:size()):fill(0)
     for i=0, mask_labels:max(), 1 do
-
       local total = masks_sums[i+1]
       local min = masks_min[i+1]
       local max = masks_max[i+1]
 
       -- Copy the mask_label so we don't modify it
       local mask = mask_labels:clone()
-      local img2 = content_image_caffe:clone()
 
       -- Make the actual mask
-      min_mask = mask:apply(function(val)
+      min_mask = mask:clone():apply(function(val)
         if val == i then 
           return min
         else
@@ -383,7 +384,7 @@ local function main(params)
 
       min_masks[name]:add(min_mask)
       -- Make the actual mask
-      max_mask = mask:apply(function(val)
+      max_mask = mask:clone():apply(function(val)
         if val == i then 
           return max
         else
@@ -391,22 +392,46 @@ local function main(params)
         end
       end):double()
 
-      diff_masks[name]:add(max_mask):csub(min_mask)
-    end
+      sum_mask = mask:clone():apply(function(val)
+        if val == i then 
+          return total
+        else
+          return 0
+        end
+      end):double()
+      sum_masks[name]:add(sum_mask)
 
+      diff_mask = mask:clone():apply(function(val)
+        if val == i then 
+          return max - min
+        else
+          return 0
+        end
+      end):double()
+
+      diff_masks[name]:add(diff_mask)
+    end
+    collectgarbage()
     -- Normalize segments across layers instead of within the layers
-    masks_weight[name] = masks_weight[name]:double():csub(min_masks[name]):cdiv(diff_masks[name])
+    masks_weight[name] = masks_weight[name]:double():csub(min_masks[name]):cdiv(diff_masks[name]):cdiv(sum_masks[name])
 
     local loss_mod = net:findByName(name)
     local target_features  = loss_mod.output
-    local scaled_mask = image.scale(masks_weight[name], target_features:size(3), target_features:size(2))
+    local scaled_mask = image.scale(masks_weight[name], math.max(target_features:size(2), target_features:size(3)))
+    -- This happens to just be the gram matrix of the mask
+    scaled_mask = scaled_mask:reshape(scaled_mask:nElement())
+    --[[
+    local target_features  = loss_mod.output
+    local scaled_mask = image.scale(masks_weight[name], caf)
     for i=1, target_features:size(1), 1 do
       target_features[1]:cmul(scaled_mask:float())
     end
     local Gram = GramMatrix()
     local new_target = Gram:forward(target_features:double()):clone()
     new_target:div(target_features:nElement())
-    loss_mod:updateTarget(new_target:float())
+    --]]
+    loss_mod:setMask(scaled_mask)
+    loss_mod:setNormalizer(target_features[1]:nElement()/scaled_mask:clone():pow(2):sum())
   end
   collectgarbage()
   
@@ -452,7 +477,7 @@ local function main(params)
         maxIter = params.num_iterations,
         momentum = 0.9,
         dampening = 0.0,
-        learningRate = 1e-3
+        learningRate = params.learning_rate
     }
   else
     error(string.format('Unrecognized optimizer "%s"', params.optimizer))
