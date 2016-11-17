@@ -143,9 +143,11 @@ local function main(params)
     if params.backend ~= 'clnn' then
       content_image_caffe = content_image_caffe:cuda()
       style_image_caffe = style_image_caffe:cuda()
+      mask_labels = mask_labels:cuda()
     else
       content_image_caffe = content_image_caffe:cl()
       style_image_caffe = style_image_caffe:cl()
+      mask_labels = mask_labels:cuda()
     end
   end
   
@@ -280,15 +282,6 @@ local function main(params)
             end
           end)
 
-          if not params.cpu then
-            if params.backend ~= 'clnn' then
-              img2:cuda()
-              mask:cuda()
-            else
-              img2:cl()
-              maks:cl()
-            end
-          end
           -- Apply the mask to the img
           local numChannels = img2:size(1)
           for c=1, numChannels, 1 do
