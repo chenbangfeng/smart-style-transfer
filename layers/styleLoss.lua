@@ -24,36 +24,37 @@ end
 
 function StyleLoss:maskInput(input)
   if not input then print('input is nil') end
-  local clone = input:clone()
+  local clone = input:clone():view(input:size(1), -1)
+  --clone[1]:cmul(self.mask)
   for i=1, clone:size(1), 1 do
-    clone:view(clone:size(1), clone:size(2) * clone:size(3))[i]:cmul(self.mask)
+    clone[i]:cmul(self.mask)
   end
-  return clone
+  return clone:view(input:size())
 end
 
 function StyleLoss:updateOutput(input)
-  if self.mask then
+  if self.mask and false then
     self.G = self.gram:forward(self:maskInput(input))
+    self.loss = self.crit:forward(self.G, self.target)
   else
-    self.G = self.gram:forward(input)
+    self.G = self.gram:forward(input):div(input:nElement())
+    self.loss = self.crit:forward(self.G, self.target)
   end
-  self.G:div(input:nElement())
-  self.loss = self.crit:forward(self.G, self.target:div(self.normalizer))
   self.loss = self.loss * self.strength
   self.output = input
   return self.output
 end
 
 function StyleLoss:updateGradInput(input, gradOutput)
-  if self.mask then
-    self.G = self.gram:forward(self:maskInput(input))
+  local dG
+  if self.mask and false then
+    dG = self.crit:backward(self.G, self.target)
+    self.gradInput = self.gram:backward(input, dG:div(self.normalizer))
   else
-    self.G = self.gram:forward(input)
+    dG = self.crit:backward(self.G, self.target):div(input:nElement())
+    self.gradInput = self.gram:backward(input, dG)
   end
-  local dG = self.crit:backward(self.G, self.target:div(self.normalizer))
-  dG:div(input:nElement())
 
-  self.gradInput = self.gram:backward(self:maskInput(input), dG)
   if self.normalize then
     self.gradInput:div(torch.norm(self.gradInput, 1) + 1e-8)
   end
