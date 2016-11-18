@@ -9,27 +9,26 @@ require 'loadcaffe'
 local cmd = torch.CmdLine()
 
 -- Basic options
-cmd:option('-style_image', 'samples/TheWave-Style.jpg',
-           'Style target image')
-cmd:option('-content_image', 'tests/origami.jpeg',
-           'Content target image')
-cmd:option('-image_size', 512, 'Maximum height / width of generated image')
+cmd:option('-style_image', 'samples/TheWave-Style.jpg', 'Style target image')
+cmd:option('-content_image', 'tests/origami.jpeg', 'Content target image')
+cmd:option('-style_blend_weights', 'nil')
+cmd:option('-image_size', 256, 'Maximum height / width of generated image')
 cmd:option('-cpu', true, 'Zero-indexed ID of the GPU to use; for CPU mode set -gpu = -1')
 cmd:option('-mask_labels', 'masks/origami.dat',
            'Labels to generate masks for smarter style transfer')
 
 -- Optimization options
 cmd:option('-content_weight', 5e0)
-cmd:option('-style_weight', 1e4)
+cmd:option('-style_weight', 1e2)
 cmd:option('-tv_weight', 1e-3)
 cmd:option('-num_iterations', 1000)
-cmd:option('-normalize_gradients', false)
+cmd:option('-normalize_gradients', true)
 cmd:option('-init', 'image', 'random|image')
 cmd:option('-optimizer', 'lbfgs', 'lbfgs|adam|sgd')
-cmd:option('-learning_rate', 1e1)
+cmd:option('-learning_rate', 1e3)
 
 -- Output options
-cmd:option('-print_iter', 1)
+cmd:option('-print_iter', 50)
 cmd:option('-save_iter', 10)
 cmd:option('-output_image', 'out.png')
 cmd:option('-output_dir',      'frames', 'Output directory to save to.' )
@@ -37,7 +36,7 @@ cmd:option('-output_dir',      'frames', 'Output directory to save to.' )
 -- Other options
 cmd:option('-style_scale', 1.0)
 cmd:option('-original_colors', 0)
-cmd:option('-pooling', 'avg', 'max|avg')
+cmd:option('-pooling', 'max', 'max|avg')
 cmd:option('-proto_file', 'models/VGG_ILSVRC_19_layers_deploy.prototxt')
 cmd:option('-model_file', 'models/VGG_ILSVRC_19_layers.caffemodel')
 cmd:option('-backend', 'nn', 'nn|cudnn|clnn')
@@ -46,7 +45,7 @@ cmd:option('-seed', -1)
 cmd:option('-mask_crit', 'cos', 'Criterion for Gram matrix similarity (cos|mse)')
 
 cmd:option('-content_layers', 'relu4_2', 'layers for content')
---cmd:option('-style_layers', 'relu1_1','layers for style')
+--cmd:option('-style_layers', 'relu1_1,relu2_1,relu3_1,relu5_1','layers for style')
 cmd:option('-style_layers', 'relu1_1,relu2_1,relu3_1,relu4_1,relu5_1','layers for style')
 
 paths.dofile('util/nnModule.lua')
@@ -107,7 +106,7 @@ local function main(params)
   local style_size = math.ceil(params.style_scale * params.image_size)
   local style_img = image.load(params.style_image, 3)
   -- Scale image to have same dimensions as the content
-  style_img = image.scale(style_img, content_image:size(2), content_image:size(3), 'bilinear')
+  style_img = image.scale(style_img, style_size, 'bilinear')
   local style_image_caffe = preprocess(style_img):float()
 
   -- Load mask labels
@@ -115,30 +114,30 @@ local function main(params)
   local max = mask_labels:max()
   local min = mask_labels:min()
   -- Normalize so we can scale this like an image
-  mask_labels:csub(min):div(max-min)
+  mask_labels:add(-min):div(max-min)
   mask_labels = image.scale(mask_labels, params.image_size, 'bilinear')
   -- Undo normalization
   mask_labels:mul(max-min):add(min):round()
 
   -- Normalize the style blending weights so they sum to 1
   style_weights = {
-    ['conv1_1'] = 1,
-    ['conv2_1'] = 1,
-    ['conv3_1'] = 1,
-    ['conv4_1'] = 1,
-    ['conv5_1'] = 1,
+    ['relu1_1'] = 1,
+    ['relu2_1'] = 1,
+    ['relu3_1'] = 1,
+    ['relu4_1'] = 1,
+    ['relu5_1'] = 1,
   }
   local style_sum = 0
-  for i = 1, #style_weights do
-    style_weights[i] = tonumber(style_weights[i])
-    style_sum = style_sum + style_weights[i]
-  end
 
-  for i = 1, #style_weights do
-    style_weights[i] = style_weights[i] / style_sum
+  for name, weight in pairs(style_weights) do
+    style_weights[name] = tonumber(weight)
+    style_sum = style_sum + weight
   end
-  
-
+  --[[
+  for name,weight in pairs(style_weights) do
+    style_weights[name] = style_weights[name] / style_sum
+  end
+  --]]
   if not params.cpu then
     if params.backend ~= 'clnn' then
       content_image_caffe = content_image_caffe:cuda()
@@ -166,13 +165,11 @@ local function main(params)
       if params.backend ~= 'clnn' then
         tv_mod = tv_mod:cuda()
       else
-       tv_mod=  tv_mod:cl()
+       tv_mod = tv_mod:cl()
       end
     end
     net:add(tv_mod)
   end
-
-  local loss_layers = {}
   local masks_weight = {}
   local masks_sums = {}
   local masks_min= {}
@@ -183,8 +180,6 @@ local function main(params)
       local name = layer.name
       local layer_type = torch.type(layer)
       local is_pooling = (layer_type == 'cudnn.SpatialMaxPooling' or layer_type == 'nn.SpatialMaxPooling')
-
-
       if is_pooling and params.pooling == 'avg' then
         assert(layer.padW == 0 and layer.padH == 0)
         local kW, kH = layer.kW, layer.kH
@@ -203,14 +198,11 @@ local function main(params)
       else
         net:add(layer)
       end
-
-
       if name == content_layers[next_content_idx] then
         print("Setting up content layer", i, ":", layer.name)
         local target = net:forward(content_image_caffe):clone()
         local norm = params.normalize_gradients
         local loss_module = nn.ContentLoss(params.content_weight, target, norm):float()
-        loss_module:name(name)
         if not params.cpu then
           if params.backend ~= 'clnn' then
             loss_module:cuda()
@@ -222,8 +214,6 @@ local function main(params)
         table.insert(content_losses, loss_module)
         next_content_idx = next_content_idx + 1
       end
-
-
       if name == style_layers[next_style_idx] then
         print("Setting up style layer  ", i, ":", layer.name)
         local style_gram = GramMatrix():float()
@@ -234,12 +224,12 @@ local function main(params)
             style_gram = style_gram:cl()
           end
         end
-        local target = nil
-        local tests = nill
         local target_features = net:forward(style_image_caffe):clone()
-        local target_i = style_gram:forward(target_features):clone()
+        local target = style_gram:forward(target_features):clone()
+        target:div(target_features:nElement())
         --Init the total of the masks for the weight
-        local total_mask=torch.Tensor(mask_labels:size()):fill(0):typeAs(target_i)
+        --[/[ Remove the slash to comment this out
+        local total_mask=torch.Tensor(mask_labels:size()):fill(0):typeAs(target)
         -- The segements in the label are label starting with zero
         for j=0, mask_labels:max(), 1 do
 
@@ -270,11 +260,11 @@ local function main(params)
           end
 
           -- Copy the mask_label so we don't modify it
-          local mask = mask_labels:clone()
+          local mask = mask_labels
           local img2 = content_image_caffe:clone()
 
           -- Make the actual mask
-          mask = mask:apply(function(val)
+          mask = mask:clone():apply(function(val)
             if val == j then 
               return 1
             else
@@ -287,7 +277,7 @@ local function main(params)
           for c=1, numChannels, 1 do
             img2[c]:cmul(mask)
           end
-          local mask_features = net:forward(img2):clone()
+          local mask_features = net:forward(img2)
           -- Feed the masked image into the gram matrix
           local mask_target = mask_gram:forward(mask_features):clone()
           mask_target:div(img2:nElement())
@@ -295,11 +285,11 @@ local function main(params)
           if mask_crit == 'mse' then 
             local crit = nn.MSECriterion()
             -- Use the mean squared error as the distance metric
-            dist = crit:forward(mask_target, target_i)
+            dist = crit:forward(mask_target, target)
           elseif mask_crit == 'cos' then 
             local crit = nn.CosineDistance()
             -- Use the consine distance as the distance metric
-            dist = crit:forward({mask_target:double(), target_i:double()}):float():mean()
+            dist = crit:forward({mask_target:double(), target:double()}):float():mean()
           end
 
           masks_sums[j+1] = masks_sums[j+1] + dist
@@ -327,10 +317,10 @@ local function main(params)
 
         -- Make the mask layer for the weights
         masks_weight[name] = total_mask
-        table.insert(loss_layers, i)
-        target_i:div(target_features:nElement())
+        --]]
+
         local norm = params.normalize_gradients
-        local loss_module = nn.StyleLoss(params.style_weight, target_i, norm):float()
+        local loss_module = nn.StyleLoss(params.style_weight, target, norm):float()
         loss_module:name(name)
         if not params.cpu then
           if params.backend ~= 'clnn' then
@@ -358,6 +348,7 @@ local function main(params)
   end
   collectgarbage()
   -- We have the mask, now we need to normalizes across the layers for a segment
+  --[\[ Remove the slash to comment this out
   min_masks = {}
   diff_masks = {}
   sum_masks = {}
@@ -415,14 +406,13 @@ local function main(params)
     end
     collectgarbage()
     -- Normalize segments across layers instead of within the layers
-    masks_weight[name] = masks_weight[name]:csub(min_masks[name]):cdiv(diff_masks[name]):cdiv(sum_masks[name])
-
     local loss_mod = net:findByName(name)
-    local target_features  = loss_mod.output
-    print(image)
-    local scaled_mask = image.scale(masks_weight[name]:float(), math.max(target_features:size(2), target_features:size(3)))
+    local target_features  = loss_mod.output:clone()
+
+    local scaled_mask = torch.Tensor(target_features[1]:size()):float()
+    image.scale(scaled_mask, masks_weight[name], 'bilinear')
     -- This happens to just be the gram matrix of the mask
-    scaled_mask = scaled_mask:reshape(scaled_mask:nElement())
+    scaled_mask = scaled_mask:view(-1)
     if not params.cpu then
       if params.backend ~= 'clnn' then
         scaled_mask = scaled_mask:cuda()
@@ -430,19 +420,19 @@ local function main(params)
         scaled_mask = scaled_mask:cl()
       end
     end
-    --[[
-    local target_features  = loss_mod.output
-    local scaled_mask = image.scale(masks_weight[name], caf)
     for i=1, target_features:size(1), 1 do
-      target_features[1]:cmul(scaled_mask:float())
+      target_features[i]:cmul(scaled_mask:float())
     end
     local Gram = GramMatrix()
     local new_target = Gram:forward(target_features:double()):clone()
     new_target:div(target_features:nElement())
-    --]]
-    loss_mod:setMask(scaled_mask)
-    loss_mod:setNormalizer(target_features[1]:nElement()/scaled_mask:clone():pow(2):sum())
+    --new_target:div(target_features:nElement()):mul(scaled_mask:sum())
+    loss_mod.target = torch.add(loss_mod.target, loss_mod.target, new_target:typeAs(loss_mod.output))
+    --loss_mod:setMask(scaled_mask)
+    --print(scaled_mask:pow(2))
+    --loss_mod:setNormalizer(target_features[1]:nElement()/scaled_mask:sum())
   end
+  --]===]
   collectgarbage()
   
   -- Initialize the image
@@ -476,7 +466,7 @@ local function main(params)
   if params.optimizer == 'lbfgs' then
     optim_state = {
       maxIter = params.num_iterations,
-      verbose=true,
+      verbose = true,
     }
   elseif params.optimizer == 'adam' then
     optim_state = {
