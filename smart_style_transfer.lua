@@ -237,17 +237,14 @@ local function main(params)
             masks_sums[j+1] = 0
           end
 
+          --Min will alway be zero but put this here anyway
           if not masks_min[j+1] then
             masks_min[j+1] = 0
           end
 
           if not masks_max[j+1] then
             -- The cosine distance is already normalized between 0 and 1
-            if mask_crit == 'cos' then
-              masks_max[j+1] = 1
-            else
-              masks_max[j+1] = 0
-            end
+            masks_max[j+1] = 1
           end
           -- Need a network to get the gram matrix
           local mask_gram = GramMatrix():float()
@@ -291,8 +288,9 @@ local function main(params)
             -- Use the consine distance as the distance metric
             dist = crit:forward({mask_target:double(), target:double()}):float():mean()
           end
-
+          print(name, j, dist)
           masks_sums[j+1] = masks_sums[j+1] + dist
+         
           if dist < masks_min[j+1] then
             masks_min[j+1] = dist
           end
@@ -352,7 +350,7 @@ local function main(params)
   min_masks = {}
   diff_masks = {}
   sum_masks = {}
-  net:forward(content_image_caffe)
+  net:forward(style_image_caffe)
   for i,name in pairs(style_layers) do
 
     min_masks[name] = torch.Tensor(mask_labels:size()):fill(0):typeAs(content_image_caffe)
@@ -406,6 +404,8 @@ local function main(params)
     end
     collectgarbage()
     -- Normalize segments across layers instead of within the layers
+    masks_weight[name] = masks_weight[name]:csub(min_masks[name]):cdiv(diff_masks[name])
+    image.display{masks_weight[name], legend=name};
     local loss_mod = net:findByName(name)
     local target_features  = loss_mod.output:clone()
 
@@ -425,9 +425,9 @@ local function main(params)
     end
     local Gram = GramMatrix()
     local new_target = Gram:forward(target_features:double()):clone()
-    new_target:div(target_features:nElement())
+    new_target:div(scaled_mask:sum() * target_features:size(1))
     --new_target:div(target_features:nElement()):mul(scaled_mask:sum())
-    loss_mod.target = torch.add(loss_mod.target, loss_mod.target, new_target:typeAs(loss_mod.output))
+    loss_mod.target = new_target:typeAs(loss_mod.output) --torch.add(loss_mod.target, loss_mod.target, new_target:typeAs(loss_mod.output))
     --loss_mod:setMask(scaled_mask)
     --print(scaled_mask:pow(2))
     --loss_mod:setNormalizer(target_features[1]:nElement()/scaled_mask:sum())
