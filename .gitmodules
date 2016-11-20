@@ -1,0 +1,3 @@
+[submodule "gSLICr-torch"]
+	path = gSLICr-torch
+	url = http://github.com/jhjin/gSLICr-torch.git
