@@ -288,7 +288,7 @@ local function main(params)
             -- Use the consine distance as the distance metric
             dist = crit:forward({mask_target:double(), target:double()}):float():mean()
           end
-          print(name, j, dist)
+
           masks_sums[j+1] = masks_sums[j+1] + dist
          
           if dist < masks_min[j+1] then
@@ -405,7 +405,7 @@ local function main(params)
     collectgarbage()
     -- Normalize segments across layers instead of within the layers
     masks_weight[name] = masks_weight[name]:csub(min_masks[name]):cdiv(diff_masks[name])
-    image.display{masks_weight[name], legend=name};
+    --image.display{masks_weight[name], legend=name};
     local loss_mod = net:findByName(name)
     local target_features  = loss_mod.output:clone()
 
