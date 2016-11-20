@@ -9,12 +9,12 @@ require 'loadcaffe'
 local cmd = torch.CmdLine()
 
 -- Basic options
-cmd:option('-style_image', 'samples/TheWave-Style.jpg', 'Style target image')
-cmd:option('-content_image', 'tests/origami.jpeg', 'Content target image')
+cmd:option('-style_image', 'examples/styles/TheWave-Style.jpg', 'Style target image')
+cmd:option('-content_image', 'examples/content/origami.jpeg', 'Content target image')
 cmd:option('-style_blend_weights', 'nil')
 cmd:option('-image_size', 512, 'Maximum height / width of generated image')
 cmd:option('-cpu', true, 'Zero-indexed ID of the GPU to use; for CPU mode set -gpu = -1')
-cmd:option('-mask_labels', 'masks/origami.dat',
+cmd:option('-mask_labels', 'examples/segments/origami.dat',
            'Labels to generate masks for smarter style transfer')
 
 -- Optimization options
