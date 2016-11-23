@@ -9,27 +9,27 @@ require 'loadcaffe'
 local cmd = torch.CmdLine()
 
 -- Basic options
-cmd:option('-style_image', 'examples/styles/TheWave-Style.jpg', 'Style target image')
-cmd:option('-content_image', 'examples/content/origami.jpeg', 'Content target image')
+cmd:option('-style_image', 'examples/styles/Abstract-Style.jpg', 'Style target image')
+cmd:option('-content_image', 'examples/content/sunset.jpg', 'Content target image')
 cmd:option('-style_blend_weights', 'nil')
 cmd:option('-image_size', 512, 'Maximum height / width of generated image')
 cmd:option('-cpu', true, 'Zero-indexed ID of the GPU to use; for CPU mode set -gpu = -1')
-cmd:option('-mask_labels', 'examples/segments/origami.dat',
+cmd:option('-mask_labels', 'examples/segments/sunset.dat',
            'Labels to generate masks for smarter style transfer')
 
 -- Optimization options
 cmd:option('-content_weight', 5e0)
 cmd:option('-style_weight', 1e2)
 cmd:option('-tv_weight', 1e-3)
-cmd:option('-num_iterations', 1000)
+cmd:option('-num_iterations', 500)
 cmd:option('-normalize_gradients', true)
 cmd:option('-init', 'image', 'random|image')
-cmd:option('-optimizer', 'lbfgs', 'lbfgs|adam|sgd')
+cmd:option('-optimizer', 'lbfgs', 'lbfgs|adam')
 cmd:option('-learning_rate', 1e3)
 
 -- Output options
 cmd:option('-print_iter', 50)
-cmd:option('-save_iter', 10)
+cmd:option('-save_iter', 1)
 cmd:option('-output_image', 'out.png')
 cmd:option('-output_dir',      'frames', 'Output directory to save to.' )
 
@@ -115,6 +115,7 @@ local function main(params)
   local min = mask_labels:min()
   -- Normalize so we can scale this like an image
   mask_labels:add(-min):div(max-min)
+  
   mask_labels = image.scale(mask_labels, params.image_size, 'bilinear')
   -- Undo normalization
   mask_labels:mul(max-min):add(min):round()
@@ -405,7 +406,7 @@ local function main(params)
     collectgarbage()
     -- Normalize segments across layers instead of within the layers
     masks_weight[name] = masks_weight[name]:csub(min_masks[name]):cdiv(diff_masks[name])
-    --image.display{masks_weight[name], legend=name};
+
     local loss_mod = net:findByName(name)
     local target_features  = loss_mod.output:clone()
 
@@ -471,13 +472,6 @@ local function main(params)
   elseif params.optimizer == 'adam' then
     optim_state = {
       learningRate = params.learning_rate,
-    }
-  elseif params.optimizer == 'sgd' then
-    optim_state = {
-        maxIter = params.num_iterations,
-        momentum = 0.9,
-        dampening = 0.0,
-        learningRate = params.learning_rate
     }
   else
     error(string.format('Unrecognized optimizer "%s"', params.optimizer))
