@@ -410,7 +410,7 @@ local function main(params)
     local loss_mod = net:findByName(name)
     local target_features  = loss_mod.output:clone()
 
-    local scaled_mask = torch.Tensor(target_features[1]:size()):float()
+    local scaled_mask = torch.Tensor(target_features[1]:size()):typeAs(target_features)
     image.scale(scaled_mask, masks_weight[name], 'bilinear')
     -- This happens to just be the gram matrix of the mask
     scaled_mask = scaled_mask:view(-1)
