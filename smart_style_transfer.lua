@@ -9,12 +9,12 @@ require 'loadcaffe'
 local cmd = torch.CmdLine()
 
 -- Basic options
-cmd:option('-style_image', 'examples/styles/Abstract-Style.jpg', 'Style target image')
-cmd:option('-content_image', 'examples/content/sunset.jpg', 'Content target image')
+cmd:option('-style_image', 'examples/styles/TheWave-Style.jpg', 'Style target image')
+cmd:option('-content_image', 'examples/content/origami.jpeg', 'Content target image')
 cmd:option('-style_blend_weights', 'nil')
 cmd:option('-image_size', 512, 'Maximum height / width of generated image')
 cmd:option('-cpu', true, 'Zero-indexed ID of the GPU to use; for CPU mode set -gpu = -1')
-cmd:option('-mask_labels', 'examples/segments/sunset.dat',
+cmd:option('-mask_labels', 'examples/segments/origami-2.dat',
            'Labels to generate masks for smarter style transfer')
 
 -- Optimization options
@@ -351,7 +351,7 @@ local function main(params)
   min_masks = {}
   diff_masks = {}
   sum_masks = {}
-  net:forward(style_image_caffe)
+  net:forward(content_image_caffe)
   for i,name in pairs(style_layers) do
 
     min_masks[name] = torch.Tensor(mask_labels:size()):fill(0):typeAs(content_image_caffe)
@@ -414,6 +414,7 @@ local function main(params)
     image.scale(scaled_mask, masks_weight[name], 'bilinear')
     -- This happens to just be the gram matrix of the mask
     scaled_mask = scaled_mask:view(-1)
+    --scaled_mask:add(-1):mul(-1)
     if not params.cpu then
       if params.backend ~= 'clnn' then
         scaled_mask = scaled_mask:cuda()
@@ -421,6 +422,7 @@ local function main(params)
         scaled_mask = scaled_mask:cl()
       end
     end
+    --[[
     for i=1, target_features:size(1), 1 do
       target_features[i]:cmul(scaled_mask:float())
     end
@@ -428,10 +430,10 @@ local function main(params)
     local new_target = Gram:forward(target_features:double()):clone()
     new_target:div(scaled_mask:sum() * target_features:size(1))
     --new_target:div(target_features:nElement()):mul(scaled_mask:sum())
-    loss_mod.target = new_target:typeAs(loss_mod.output) --torch.add(loss_mod.target, loss_mod.target, new_target:typeAs(loss_mod.output))
-    --loss_mod:setMask(scaled_mask)
+    --loss_mod.target = new_target:typeAs(loss_mod.output) --torch.add(loss_mod.target, loss_mod.target, new_target:typeAs(loss_mod.output))
+    --]]
+    loss_mod:setMask(scaled_mask)
     --print(scaled_mask:pow(2))
-    --loss_mod:setNormalizer(target_features[1]:nElement()/scaled_mask:sum())
   end
   --]===]
   collectgarbage()
