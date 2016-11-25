@@ -33,9 +33,9 @@ function StyleLoss:maskInput(input)
 end
 
 function StyleLoss:updateOutput(input)
-  if self.mask and false then
-    self.G = self.gram:forward(self:maskInput(input))
-    self.loss = self.crit:forward(self.G, self.target)
+  if self.mask then
+    self.G = self.gram:forward(self:maskInput(input)):div(self.mask:mean() *input:nElement())
+    self.loss = self.crit:forward(self.G, self.target:div(self.normalizer))
   else
     self.G = self.gram:forward(input):div(input:nElement())
     self.loss = self.crit:forward(self.G, self.target)
@@ -47,9 +47,9 @@ end
 
 function StyleLoss:updateGradInput(input, gradOutput)
   local dG
-  if self.mask and false then
-    dG = self.crit:backward(self.G, self.target)
-    self.gradInput = self.gram:backward(input, dG:div(self.normalizer))
+  if self.mask then
+    dG = self.crit:backward(self.G, self.target):div(self.mask:mean() *input:nElement())
+    self.gradInput = self.gram:backward(input, dG)
   else
     dG = self.crit:backward(self.G, self.target):div(input:nElement())
     self.gradInput = self.gram:backward(input, dG)
