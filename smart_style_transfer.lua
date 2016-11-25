@@ -13,7 +13,7 @@ cmd:option('-style_image', 'examples/styles/PearlEarring-Style.jpg', 'Style targ
 cmd:option('-content_image', 'examples/content/street.jpg', 'Content target image')
 cmd:option('-style_blend_weights', 'nil')
 cmd:option('-image_size', 512, 'Maximum height / width of generated image')
-cmd:option('-cpu', true, 'Zero-indexed ID of the GPU to use; for CPU mode set -gpu = -1')
+cmd:option('-gpu', true, 'Zero-indexed ID of the GPU to use; for CPU mode set -gpu = -1')
 cmd:option('-mask_labels', 'examples/segments/street.dat',
            'Labels to generate masks for smarter style transfer')
 
