@@ -9,12 +9,12 @@ require 'loadcaffe'
 local cmd = torch.CmdLine()
 
 -- Basic options
-cmd:option('-style_image', 'examples/styles/TheWave-Style.jpg', 'Style target image')
-cmd:option('-content_image', 'examples/content/origami.jpeg', 'Content target image')
+cmd:option('-style_image', 'examples/styles/PearlEarring-Style.jpg', 'Style target image')
+cmd:option('-content_image', 'examples/content/street.jpg', 'Content target image')
 cmd:option('-style_blend_weights', 'nil')
 cmd:option('-image_size', 512, 'Maximum height / width of generated image')
 cmd:option('-cpu', true, 'Zero-indexed ID of the GPU to use; for CPU mode set -gpu = -1')
-cmd:option('-mask_labels', 'examples/segments/origami-2.dat',
+cmd:option('-mask_labels', 'examples/segments/street.dat',
            'Labels to generate masks for smarter style transfer')
 
 -- Optimization options
@@ -29,7 +29,7 @@ cmd:option('-learning_rate', 1e3)
 
 -- Output options
 cmd:option('-print_iter', 50)
-cmd:option('-save_iter', 1)
+cmd:option('-save_iter', 50)
 cmd:option('-output_image', 'out.png')
 cmd:option('-output_dir',      'frames', 'Output directory to save to.' )
 
@@ -410,8 +410,8 @@ local function main(params)
     local loss_mod = net:findByName(name)
     local target_features  = loss_mod.output:clone()
 
-    local scaled_mask = torch.Tensor(target_features[1]:size()):typeAs(target_features)
-    image.scale(scaled_mask, masks_weight[name], 'bilinear')
+    local scaled_mask = torch.Tensor(target_features[1]:size()):float()
+    image.scale(scaled_mask, masks_weight[name]:float(), 'bilinear')
     -- This happens to just be the gram matrix of the mask
     scaled_mask = scaled_mask:view(-1)
     --scaled_mask:add(-1):mul(-1)
